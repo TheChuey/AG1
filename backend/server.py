@@ -1,44 +1,9 @@
 import os
-import subprocess
 import json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
-class ModelManager:
-    """Detect models installed via Ollama or other local providers.
-    Currently supports scanning the Ollama models directory (~/.ollama/models).
-    Returns a list of model identifiers.
-    """
-
-
-    @staticmethod
-    def get_installed_models() -> list[str]:
-        """Return a list of installed model identifiers.
-        Tries the Ollama models directory first, filtering out internal folders.
-        Falls back to `ollama list --format json` if the CLI is available.
-        """
-        models_dir = os.path.expanduser("~/.ollama/models")
-        if os.path.isdir(models_dir):
-            try:
-                candidates = []
-                for name in os.listdir(models_dir):
-                    path = os.path.join(models_dir, name)
-                    if os.path.isdir(path) and name not in ("blobs", "manifests"):
-                        if any(fname.startswith("modelfile") or fname.endswith(".gguf") for fname in os.listdir(path)):
-                            candidates.append(name)
-                if candidates:
-                    return candidates
-            except Exception:
-                pass
-        try:
-            result = subprocess.run(["ollama", "list", "--format", "json"], capture_output=True, text=True, check=True)
-            data = json.loads(result.stdout)
-            return [item.get("model", "").split(":")[0] for item in data if isinstance(item, dict) and "model" in item]
-        except Exception:
-            return []
-
 
 from pydantic import BaseModel
 from typing import Optional, List
@@ -54,6 +19,7 @@ from chatbot.rag import KnowledgeManager
 from chatbot.utils.code_executor import CodeExecutor
 from chatbot.utils.log_viewer import LogViewer
 from chatbot.pipelines.research import ResearchPipeline
+from module import SessionDataManager, PromptAndHistoryBridge, LLMManager as ModuleLLMManager, ChatManager, ModelManager
 
 
 
@@ -68,11 +34,21 @@ code_exec = CodeExecutor()
 log_viewer = LogViewer(log_path=os.path.join(BASE_DIR, "resources", "chat_logs.jsonl"))
 research_pipeline = ResearchPipeline(model_name=config.model)
 
+# Module-level management instances
+session_data_mgr = SessionDataManager(storage_dir=os.path.join(BASE_DIR, "resources", "sessions"))
+prompt_bridge = PromptAndHistoryBridge(
+    prompts_dir=os.path.join(os.path.dirname(BASE_DIR), "prompts"),
+    history_dir=os.path.join(BASE_DIR, "resources"),
+)
+llm_mgr = ModuleLLMManager(host="localhost", port=11434)
+chat_mgr = ChatManager(storage_dir=os.path.join(BASE_DIR, "resources"))
+
 prompt_loaded = False
 prompt_path = config.system_prompt_path
 if os.path.exists(prompt_path):
     bot.load_prompt(prompt_path)
     prompt_loaded = True
+    print(f"[Server] system prompt loaded from {prompt_path}")
 
 app = FastAPI(title="AI Chatbot Server")
 
@@ -111,11 +87,13 @@ class SwitchModelRequest(BaseModel):
 
 @app.get("/api/health")
 async def health():
-    try:
-        bot.llm.send_request("ping")
-        return {"status": "ok", "model": config.model}
-    except Exception as e:
-        return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
+    models = llm_mgr.fetch_configured_models()
+    if models:
+        return {"status": "ok", "model": config.model, "models_available": models}
+    return JSONResponse(
+        status_code=503,
+        content={"status": "error", "detail": "Ollama not reachable via module LLMManager"},
+    )
 
 # --- Endpoints ---
 
@@ -152,34 +130,42 @@ async def get_config():
 
 @app.post("/api/chat")
 async def chat(data: ChatRequest):
+    agent_type = data.agent or "chat"
+    print(f"[API] POST /api/chat | agent={agent_type} session={data.session_id} msg={data.message[:60]}")
     if not prompt_loaded:
         bot.load_prompt_text("You are a helpful AI assistant.")
     if data.model and data.model != config.model:
         bot.llm.switch_model(data.model)
         config.model = data.model
+    sid = data.session_id or bot.current_session_id
+    session_data_mgr.register_session(sid, agent_type)
     try:
         response = bot.chat(data.message, session_id=data.session_id)
     except Exception as e:
-        # Log the error and return a JSON error payload so the frontend can parse it.
         import traceback, sys
         tb = traceback.format_exc()
-        print(f"[Chat Endpoint Error] {e}\n{tb}", file=sys.stderr)
+        print(f"[API] POST /api/chat ERROR: {e}\n{tb}", file=sys.stderr)
         return JSONResponse(status_code=500, content={"error": str(e)})
     log_viewer.append_entry({
         "timestamp": str(__import__("datetime").datetime.now()),
         "message": data.message,
         "reply": response,
         "model": config.model,
+        "agent": agent_type,
     })
+    print(f"[API] POST /api/chat OK | session={bot.current_session_id}")
     return {"reply": response, "session_id": bot.current_session_id}
 
 @app.post("/api/chat/reset")
 async def reset_chat():
+    print(f"[API] POST /api/chat/reset")
     bot.reset()
+    session_data_mgr.register_session(bot.current_session_id, "chat")
     return {"status": "reset", "session_id": bot.current_session_id}
 
 @app.post("/api/model/switch")
 async def switch_model(data: SwitchModelRequest):
+    print(f"[API] POST /api/model/switch | model={data.model} provider={data.provider}")
     bot.llm.switch_model(data.model, provider=data.provider)
     config.model = data.model
     if data.provider:
@@ -188,6 +174,7 @@ async def switch_model(data: SwitchModelRequest):
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
+    print(f"[API] POST /api/upload | file={file.filename}")
     save_path = os.path.join(BASE_DIR, "resources", file.filename)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     content = await file.read()
@@ -199,21 +186,21 @@ async def upload_file(file: UploadFile = File(...)):
         text = content.decode("utf-8")
         knowledge.load_texts([text], metadatas=[{"filename": file.filename}])
         result = f"Loaded text file: {file.filename}"
+    print(f"[API] POST /api/upload OK | {result}")
     return {"reply": result}
 
 @app.post("/api/rag/add")
 async def rag_add(data: dict):
-    """Add arbitrary text (e.g., research report) to the RAG knowledge base.
-    Expects JSON with a `content` field (string)."""
+    print(f"[API] POST /api/rag/add")
     content = data.get("content")
     if not content:
         raise HTTPException(status_code=400, detail="Missing 'content' in request.")
-    # Load as a synthetic document
     knowledge.load_texts([content], metadatas=[{"filename": "research.txt"}])
     return {"reply": "Research content added to RAG knowledge base."}
 
 @app.post("/api/rag/query")
 async def rag_query(data: ChatRequest):
+    print(f"[API] POST /api/rag/query | msg={data.message[:60]}")
     if not knowledge.is_ready():
         raise HTTPException(status_code=400, detail="No documents loaded. Upload a file first.")
     response = knowledge.query(data.message)
@@ -221,8 +208,8 @@ async def rag_query(data: ChatRequest):
 
 @app.post("/api/mode/set")
 async def set_mode(data: dict):
-    """Set the chatbot mode: normal, business, or thinking"""
     mode = data.get("mode", "normal")
+    print(f"[API] POST /api/mode/set | mode={mode}")
     if mode not in ("normal", "business", "thinking"):
         raise HTTPException(status_code=400, detail="Invalid mode")
     bot.set_mode(mode)
@@ -231,9 +218,12 @@ async def set_mode(data: dict):
 
 @app.post("/api/research")
 async def research(data: ResearchRequest):
+    print(f"[API] POST /api/research | query={data.query[:60]}")
+    session_data_mgr.register_session(f"research_{id(data)}", "research")
     result = research_pipeline.run(data.query)
     report = result.get("final_report", "No results")
     urls = result.get("discovered_urls", [])
+    print(f"[API] POST /api/research OK | {len(urls)} URLs, report={len(report)} chars")
     return {
         "report": report,
         "urls": urls,
@@ -244,12 +234,25 @@ async def research(data: ResearchRequest):
 
 @app.post("/api/code/execute")
 async def execute_code(data: ChatRequest):
+    print(f"[API] POST /api/code/execute | code={data.message[:60]}")
     result = code_exec.execute(data.message)
+    print(f"[API] POST /api/code/execute | success={result.get('success')}")
     return result
 
 @app.get("/api/logs")
 async def get_logs():
-    return {"entries": log_viewer.read_entries()}
+    print(f"[API] GET /api/logs")
+    entries = log_viewer.read_entries()
+    print(f"[API] GET /api/logs | {len(entries)} entries")
+    return {"entries": entries}
+
+@app.get("/api/chats")
+async def get_chats():
+    print(f"[API] GET /api/chats")
+    chats = chat_mgr.get_recent_chats_log()
+    print(f"[API] GET /api/chats | {len(chats)} sessions")
+    return {"chats": chats}
 
 if __name__ == "__main__":
+    print(f"[Server] starting FastAPI on 127.0.0.1:8000")
     uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)

@@ -15,6 +15,7 @@ class SearchAgent:
         return parsed.scheme in ("http", "https")
 
     def search(self, query: str) -> List[str]:
+        print(f"[SearchAgent] >>> query={query[:80]}")
         urls = []
         try:
             with DDGS() as ddgs:
@@ -31,4 +32,5 @@ class SearchAgent:
             if u not in seen:
                 seen.add(u)
                 clean.append(u)
+        print(f"[SearchAgent] <<< found {len(clean)} unique URLs")
         return clean

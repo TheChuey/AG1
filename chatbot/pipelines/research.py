@@ -5,6 +5,7 @@ from chatbot.agents.search import SearchAgent
 from chatbot.agents.scraper import ScraperAgent
 from chatbot.agents.auditor import AuditorAgent
 from chatbot.agents.summarizer import SummarizerAgent
+from module import SessionDataManager
 
 
 class PipelineState(TypedDict):
@@ -22,42 +23,51 @@ class ResearchPipeline:
         self.scraper_agent = ScraperAgent()
         self.auditor_agent = AuditorAgent(model_name=model_name)
         self.summarizer_agent = SummarizerAgent(model_name=model_name)
+        self.session_mgr = SessionDataManager(storage_dir="sessions")
         self.graph = self._build_graph()
 
     def _search_node(self, state: PipelineState) -> dict:
+        print(f"[ResearchPipeline] Node SEARCH | query={state['query'][:60]}")
         urls = self.search_agent.search(state["query"])
+        print(f"[ResearchPipeline] Node SEARCH found {len(urls)} URLs")
         return {"discovered_urls": urls}
 
     def _scrape_node(self, state: PipelineState) -> dict:
+        n = len(state["discovered_urls"])
+        print(f"[ResearchPipeline] Node SCRAPE | {n} URLs")
         pages = self.scraper_agent.scrape_batch(state["discovered_urls"])
+        ok = sum(1 for p in pages if p["content"])
+        print(f"[ResearchPipeline] Node SCRAPE | {ok}/{n} succeeded")
         return {"scraped_pages": pages}
 
     def _audit_node(self, state: PipelineState) -> dict:
+        n = len(state["scraped_pages"])
+        print(f"[ResearchPipeline] Node AUDIT | {n} pages")
         approved = self.auditor_agent.audit_batch(state["scraped_pages"])
+        print(f"[ResearchPipeline] Node AUDIT | {len(approved)}/{n} approved")
         return {"audited_pages": approved}
 
     def _summarize_node(self, state: PipelineState) -> dict:
+        n = len(state["audited_pages"])
+        print(f"[ResearchPipeline] Node SUMMARIZE | {n} pages")
         summaries = self.summarizer_agent.summarize_batch(state["audited_pages"])
+        print(f"[ResearchPipeline] Node SUMMARIZE | {len(summaries)} summaries")
         return {"summaries": summaries}
 
     def _report_node(self, state: PipelineState) -> dict:
+        print(f"[ResearchPipeline] Node REPORT | generating from {len(state['summaries'])} items")
         lines = []
         lines.append("# AI Research Report\n")
         lines.append(f"Generated: {datetime.now()}\n")
         lines.append(f"Query: {state['query']}\n\n---\n")
-        # Build prompt for deeper scraping and a concise summary per URL
         scrape_prompts = []
         scrape_summaries = []
         for item in state["summaries"]:
-            # Truncate summary already done earlier
             lines.append(f"## {item['title']}\n")
             lines.append(f"URL: {item['url']}\n\nSummary:\n{item['summary']}\n\n---\n")
-            # Prompt guiding scraper to extract more details
             scrape_prompts.append(f"For URL {item['url']}, extract the main sections, data tables, and any FAQs that could help a user interested in the topic.")
-            # Short summary for the scraper to prioritize
             short = item['summary'][:150]
             scrape_summaries.append(f"{item['title']}: {short}...")
-        # Combine prompts and summaries
         combined_prompt = "\n".join(scrape_prompts)
         combined_summary = "\n".join(scrape_summaries)
         return {
@@ -82,4 +92,8 @@ class ResearchPipeline:
         return graph.compile()
 
     def run(self, query: str) -> dict:
-        return self.graph.invoke({"query": query})
+        print(f"[ResearchPipeline] run() invoked | query={query[:60]}")
+        self.session_mgr.register_session(f"pipeline_{id(self)}", "research")
+        result = self.graph.invoke({"query": query})
+        print(f"[ResearchPipeline] run() complete")
+        return result

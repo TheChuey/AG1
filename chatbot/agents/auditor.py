@@ -16,6 +16,7 @@ class AuditorAgent:
         self.audit_llm = llm.with_structured_output(AuditResult)
 
     def audit(self, url: str, title: str = "", content: str = "") -> AuditResult:
+        print(f"[AuditorAgent] >>> auditing {url[:80]}")
         prompt = f"""
 You are a Content Audit Agent.
 
@@ -26,12 +27,16 @@ URL: {url}
 TITLE: {title}
 CONTENT: {content[:5000]}
 """
-        return self.audit_llm.invoke(prompt)
+        result = self.audit_llm.invoke(prompt)
+        print(f"[AuditorAgent] <<< {result.status} (confidence={result.confidence_score:.1f})")
+        return result
 
     def audit_batch(self, pages: list) -> list:
+        print(f"[AuditorAgent] auditing batch of {len(pages)} pages")
         approved = []
         for page in pages:
             result = self.audit(page["url"], page["title"], page["content"])
             if result.status == "KEEP":
                 approved.append(page)
+        print(f"[AuditorAgent] batch done ({len(approved)}/{len(pages)} approved)")
         return approved

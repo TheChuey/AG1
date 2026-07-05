@@ -1,0 +1,15 @@
+{
+    "session_id": "4b9e6065-e92e-4427-b47b-b4754ac84efa",
+    "active_branch": "main",
+    "updated_at": 1783228271.87773,
+    "messages": [
+        {
+            "role": "user",
+            "content": "hello"
+        },
+        {
+            "role": "assistant",
+            "content": "Hello! How can I help you today? \ud83d\ude0a"
+        }
+    ]
+}
