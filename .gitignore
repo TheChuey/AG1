@@ -10,3 +10,4 @@ frontend/node_modules/
 *.egg-info/
 dist/
 build/
+backend/resources/chat_logs.jsonl
