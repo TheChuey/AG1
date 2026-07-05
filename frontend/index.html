@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Chatbot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-container">
+      <header class="app-header">
+        <h1>AI Chatbot</h1>
+        <div class="status-bar" style="margin-top:8px; display:flex; align-items:center; gap:12px;">
+          Model: <span id="model-name" style="font-weight:600;">Loading...</span>
+          <select id="model-select" style="margin-left:8px; padding:4px 8px;">
+            <option value="" disabled selected>Choose model</option>
+          </select>
+          <button id="new-chat-btn" style="padding:4px 8px;">New Chat</button>
+          <button id="add-research-btn" style="padding:4px 8px; margin-left:8px;">Add Research to RAG</button>
+          <button id="business-mode-btn" style="padding:4px 8px; margin-left:8px;">Business Mode</button>
+          <button id="thinking-mode-btn" style="padding:4px 8px; margin-left:8px;">Thinking Mode</button>
+        </div>
+      </header>
+    <main class="chat-section">
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="chat-input-form" autocomplete="off">
+        <textarea id="user-input" rows="1" placeholder="Ask something..." required></textarea>
+        <button type="submit">Send</button>
+      </form>
+    </main>
+    <aside class="sidebar">
+      <h2>Upload Document</h2>
+      <input type="file" id="file-upload" />
+      <button id="upload-btn">Upload</button>
+      <h2>RAG Query</h2>
+      <input type="text" id="rag-query" placeholder="Enter query..." />
+      <button id="rag-btn">Search</button>
+      <h2>Research</h2>
+      <input type="text" id="research-query" placeholder="Enter research topic..." />
+      <button id="research-btn">Research</button>
+      <div id="research-results" class="research-results"></div>
+    </aside>
+  </div>
+  <script src="/static/js/app.js?v=20260704"></script>
+</body>
+</html>

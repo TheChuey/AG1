@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "chatbot"
+version = "1.0.0"
+description = "Modular AI chatbot package with SoC and Facade Pattern"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain-core>=1.3.0",
+    "langchain-ollama>=1.1.0",
+    "langchain-community>=0.4.0",
+    "langgraph>=1.2.0",
+    "chromadb>=1.5.0",
+    "pypdf>=6.0.0",
+    "ddgs>=9.0.0",
+    "beautifulsoup4>=4.15.0",
+    "requests>=2.33.0",
+    "fastapi>=0.136.0",
+    "uvicorn>=0.46.0",
+    "pydantic>=2.13.0",
+    "httpx>=0.28.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["chatbot*"]
