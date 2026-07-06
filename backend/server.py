@@ -19,7 +19,7 @@ from chatbot.rag import KnowledgeManager
 from chatbot.utils.code_executor import CodeExecutor
 from chatbot.utils.log_viewer import LogViewer
 from chatbot.pipelines.research import ResearchPipeline
-from module import SessionDataManager, PromptAndHistoryBridge, LLMManager as ModuleLLMManager, ChatManager, ModelManager
+from moduleV2 import AgentSessionRegistry, AgentConversationLogger, ModelDiscoveryEngine, AgentTelemetryTracker, MultiAgentOrchestrationMatrix
 
 
 
@@ -35,13 +35,10 @@ log_viewer = LogViewer(log_path=os.path.join(BASE_DIR, "resources", "chat_logs.j
 research_pipeline = ResearchPipeline(model_name=config.model)
 
 # Module-level management instances
-session_data_mgr = SessionDataManager(storage_dir=os.path.join(BASE_DIR, "resources", "sessions"))
-prompt_bridge = PromptAndHistoryBridge(
-    prompts_dir=os.path.join(os.path.dirname(BASE_DIR), "prompts"),
-    history_dir=os.path.join(BASE_DIR, "resources"),
-)
-llm_mgr = ModuleLLMManager(host="localhost", port=11434)
-chat_mgr = ChatManager(storage_dir=os.path.join(BASE_DIR, "resources"))
+session_data_mgr = AgentSessionRegistry(config_dir=os.path.join(BASE_DIR, "resources", "sessions"))
+prompt_bridge = AgentConversationLogger(storage_dir=os.path.join(os.path.dirname(BASE_DIR), "prompts"))
+llm_mgr = ModelDiscoveryEngine(host="localhost", port=11434)
+chat_mgr = AgentConversationLogger(storage_dir=os.path.join(BASE_DIR, "resources"))
 
 prompt_loaded = False
 prompt_path = config.system_prompt_path
@@ -100,7 +97,7 @@ async def health():
 @app.get("/api/models/installed")
 async def get_installed_models():
     """Return a list of locally installed LLM model IDs (e.g., Ollama)."""
-    models = ModelManager.get_installed_models()
+    models = ModelDiscoveryEngine().get_installed_models()
     if not models:
         models = ["qwen2.5-coder", "llama3.2", "mistral"]
     return {"installed_models": models}
@@ -138,7 +135,7 @@ async def chat(data: ChatRequest):
         bot.llm.switch_model(data.model)
         config.model = data.model
     sid = data.session_id or bot.current_session_id
-    session_data_mgr.register_session(sid, agent_type)
+    session_data_mgr.register_session_meta(sid, agent_type)
     try:
         response = bot.chat(data.message, session_id=data.session_id)
     except Exception as e:
@@ -160,7 +157,7 @@ async def chat(data: ChatRequest):
 async def reset_chat():
     print(f"[API] POST /api/chat/reset")
     bot.reset()
-    session_data_mgr.register_session(bot.current_session_id, "chat")
+    session_data_mgr.register_session_meta(bot.current_session_id, "chat")
     return {"status": "reset", "session_id": bot.current_session_id}
 
 @app.post("/api/model/switch")
@@ -219,7 +216,7 @@ async def set_mode(data: dict):
 @app.post("/api/research")
 async def research(data: ResearchRequest):
     print(f"[API] POST /api/research | query={data.query[:60]}")
-    session_data_mgr.register_session(f"research_{id(data)}", "research")
+    session_data_mgr.register_session_meta(f"research_{id(data)}", "research")
     result = research_pipeline.run(data.query)
     report = result.get("final_report", "No results")
     urls = result.get("discovered_urls", [])
